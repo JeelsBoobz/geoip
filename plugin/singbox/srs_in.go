@@ -1,8 +1,9 @@
-package plaintext
+package singbox
 
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,36 +11,29 @@ import (
 	"strings"
 
 	"github.com/Loyalsoldier/geoip/lib"
+	"github.com/sagernet/sing-box/common/srs"
 )
 
 const (
-	typeTextIn = "text"
-	descTextIn = "Convert plaintext IP & CIDR to other formats"
+	typeSRSIn = "singboxSRS"
+	descSRSIn = "Convert sing-box SRS data to other formats"
 )
 
 func init() {
-	lib.RegisterInputConfigCreator(typeTextIn, func(action lib.Action, data json.RawMessage) (lib.InputConverter, error) {
-		return newTextIn(typeTextIn, action, data)
+	lib.RegisterInputConfigCreator(typeSRSIn, func(action lib.Action, data json.RawMessage) (lib.InputConverter, error) {
+		return newSRSIn(action, data)
 	})
-	lib.RegisterInputConverter(typeTextIn, &textIn{
-		Description: descTextIn,
+	lib.RegisterInputConverter(typeSRSIn, &srsIn{
+		Description: descSRSIn,
 	})
 }
 
-func newTextIn(iType string, action lib.Action, data json.RawMessage) (lib.InputConverter, error) {
+func newSRSIn(action lib.Action, data json.RawMessage) (lib.InputConverter, error) {
 	var tmp struct {
 		Name       string     `json:"name"`
 		URI        string     `json:"uri"`
 		InputDir   string     `json:"inputDir"`
 		OnlyIPType lib.IPType `json:"onlyIPType"`
-
-		JSONPath             []string `json:"jsonPath"`
-		RemovePrefixesInLine []string `json:"removePrefixesInLine"`
-		RemoveSuffixesInLine []string `json:"removeSuffixesInLine"`
-	}
-
-	if strings.TrimSpace(iType) == "" {
-		return nil, fmt.Errorf("type is required")
 	}
 
 	if len(data) > 0 {
@@ -49,57 +43,59 @@ func newTextIn(iType string, action lib.Action, data json.RawMessage) (lib.Input
 	}
 
 	if tmp.Name == "" && tmp.URI == "" && tmp.InputDir == "" {
-		return nil, fmt.Errorf("type %s | action %s missing inputdir or name or uri", typeTextIn, action)
+		return nil, fmt.Errorf("type %s | action %s missing inputdir or name or uri", typeSRSIn, action)
 	}
 
 	if (tmp.Name != "" && tmp.URI == "") || (tmp.Name == "" && tmp.URI != "") {
-		return nil, fmt.Errorf("type %s | action %s name & uri must be specified together", typeTextIn, action)
+		return nil, fmt.Errorf("type %s | action %s name & uri must be specified together", typeSRSIn, action)
 	}
 
-	if iType == typeJSONIn && len(tmp.JSONPath) == 0 {
-		return nil, fmt.Errorf("type %s | action %s missing jsonPath", typeJSONIn, action)
-	}
-
-	return &textIn{
-		Type:        iType,
+	return &srsIn{
+		Type:        typeSRSIn,
 		Action:      action,
-		Description: descTextIn,
+		Description: descSRSIn,
 		Name:        tmp.Name,
 		URI:         tmp.URI,
 		InputDir:    tmp.InputDir,
 		OnlyIPType:  tmp.OnlyIPType,
-
-		JSONPath:             tmp.JSONPath,
-		RemovePrefixesInLine: tmp.RemovePrefixesInLine,
-		RemoveSuffixesInLine: tmp.RemoveSuffixesInLine,
 	}, nil
 }
 
-func (t *textIn) GetType() string {
-	return t.Type
+type srsIn struct {
+	Type        string
+	Action      lib.Action
+	Description string
+	Name        string
+	URI         string
+	InputDir    string
+	OnlyIPType  lib.IPType
 }
 
-func (t *textIn) GetAction() lib.Action {
-	return t.Action
+func (s *srsIn) GetType() string {
+	return s.Type
 }
 
-func (t *textIn) GetDescription() string {
-	return t.Description
+func (s *srsIn) GetAction() lib.Action {
+	return s.Action
 }
 
-func (t *textIn) Input(container lib.Container) (lib.Container, error) {
+func (s *srsIn) GetDescription() string {
+	return s.Description
+}
+
+func (s *srsIn) Input(container lib.Container) (lib.Container, error) {
 	entries := make(map[string]*lib.Entry)
 	var err error
 
 	switch {
-	case t.InputDir != "":
-		err = t.walkDir(t.InputDir, entries)
-	case t.Name != "" && t.URI != "":
+	case s.InputDir != "":
+		err = s.walkDir(s.InputDir, entries)
+	case s.Name != "" && s.URI != "":
 		switch {
-		case strings.HasPrefix(strings.ToLower(t.URI), "http://"), strings.HasPrefix(strings.ToLower(t.URI), "https://"):
-			err = t.walkRemoteFile(t.URI, t.Name, entries)
+		case strings.HasPrefix(strings.ToLower(s.URI), "http://"), strings.HasPrefix(strings.ToLower(s.URI), "https://"):
+			err = s.walkRemoteFile(s.URI, s.Name, entries)
 		default:
-			err = t.walkLocalFile(t.URI, t.Name, entries)
+			err = s.walkLocalFile(s.URI, s.Name, entries)
 		}
 	default:
 		return nil, fmt.Errorf("config missing argument inputDir or name or uri")
@@ -110,7 +106,7 @@ func (t *textIn) Input(container lib.Container) (lib.Container, error) {
 	}
 
 	var ignoreIPType lib.IgnoreIPOption
-	switch t.OnlyIPType {
+	switch s.OnlyIPType {
 	case lib.IPv4:
 		ignoreIPType = lib.IgnoreIPv6
 	case lib.IPv6:
@@ -118,11 +114,11 @@ func (t *textIn) Input(container lib.Container) (lib.Container, error) {
 	}
 
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("type %s | action %s no entry is generated", t.Type, t.Action)
+		return nil, fmt.Errorf("type %s | action %s no entry is generated", s.Type, s.Action)
 	}
 
 	for _, entry := range entries {
-		switch t.Action {
+		switch s.Action {
 		case lib.ActionAdd:
 			if err := container.Add(entry, ignoreIPType); err != nil {
 				return nil, err
@@ -139,7 +135,7 @@ func (t *textIn) Input(container lib.Container) (lib.Container, error) {
 	return container, nil
 }
 
-func (t *textIn) walkDir(dir string, entries map[string]*lib.Entry) error {
+func (s *srsIn) walkDir(dir string, entries map[string]*lib.Entry) error {
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -148,7 +144,7 @@ func (t *textIn) walkDir(dir string, entries map[string]*lib.Entry) error {
 			return nil
 		}
 
-		if err := t.walkLocalFile(path, "", entries); err != nil {
+		if err := s.walkLocalFile(path, "", entries); err != nil {
 			return err
 		}
 
@@ -158,7 +154,7 @@ func (t *textIn) walkDir(dir string, entries map[string]*lib.Entry) error {
 	return err
 }
 
-func (t *textIn) walkLocalFile(path, name string, entries map[string]*lib.Entry) error {
+func (s *srsIn) walkLocalFile(path, name string, entries map[string]*lib.Entry) error {
 	entryName := ""
 	name = strings.TrimSpace(name)
 	if name != "" {
@@ -183,22 +179,20 @@ func (t *textIn) walkLocalFile(path, name string, entries map[string]*lib.Entry)
 		return fmt.Errorf("found duplicated list %s", entryName)
 	}
 
-	entry := lib.NewEntry(entryName)
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	if err := t.scanFile(file, entry); err != nil {
+
+	if err := s.generateEntries(entryName, file, entries); err != nil {
 		return err
 	}
-
-	entries[entryName] = entry
 
 	return nil
 }
 
-func (t *textIn) walkRemoteFile(url, name string, entries map[string]*lib.Entry) error {
+func (s *srsIn) walkRemoteFile(url, name string, entries map[string]*lib.Entry) error {
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
@@ -209,13 +203,33 @@ func (t *textIn) walkRemoteFile(url, name string, entries map[string]*lib.Entry)
 		return fmt.Errorf("failed to get remote file %s, http status code %d", url, resp.StatusCode)
 	}
 
-	name = strings.ToUpper(name)
-	entry := lib.NewEntry(name)
-	if err := t.scanFile(resp.Body, entry); err != nil {
+	if err := s.generateEntries(name, resp.Body, entries); err != nil {
 		return err
 	}
 
-	entries[name] = entry
+	return nil
+}
 
+func (s *srsIn) generateEntries(name string, reader io.Reader, entries map[string]*lib.Entry) error {
+	name = strings.ToUpper(name)
+	entry, found := entries[name]
+	if !found {
+		entry = lib.NewEntry(name)
+	}
+
+	plainRuleSet, err := srs.Read(reader, true)
+	if err != nil {
+		return err
+	}
+
+	for _, rule := range plainRuleSet.Rules {
+		for _, cidrStr := range rule.DefaultOptions.IPCIDR {
+			if err := entry.AddPrefix(cidrStr); err != nil {
+				return err
+			}
+		}
+	}
+
+	entries[name] = entry
 	return nil
 }
