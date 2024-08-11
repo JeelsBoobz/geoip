@@ -25,8 +25,8 @@ func (i *Instance) Init(configFile string) error {
 	var content []byte
 	var err error
 	configFile = strings.TrimSpace(configFile)
-	if strings.HasPrefix(configFile, "http://") || strings.HasPrefix(configFile, "https://") {
-		content, err = getRemoteURLContent(configFile)
+	if strings.HasPrefix(strings.ToLower(configFile), "http://") || strings.HasPrefix(strings.ToLower(configFile), "https://") {
+		content, err = GetRemoteURLContent(configFile)
 	} else {
 		content, err = os.ReadFile(configFile)
 	}
@@ -34,6 +34,22 @@ func (i *Instance) Init(configFile string) error {
 		return err
 	}
 
+	if err := json.Unmarshal(content, &i.config); err != nil {
+		return err
+	}
+
+	for _, input := range i.config.Input {
+		i.input = append(i.input, input.converter)
+	}
+
+	for _, output := range i.config.Output {
+		i.output = append(i.output, output.converter)
+	}
+
+	return nil
+}
+
+func (i *Instance) InitFromBytes(content []byte) error {
 	if err := json.Unmarshal(content, &i.config); err != nil {
 		return err
 	}
