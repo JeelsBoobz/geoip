@@ -129,7 +129,7 @@ func (g *geoLite2ASNCSV) Input(container lib.Container) (lib.Container, error) {
 	}
 
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("❌ [type %s | action %s] no entry is generated", typeASNCSV, g.Action)
+		return nil, fmt.Errorf("❌ [type %s | action %s] no entry is generated", g.Type, g.Action)
 	}
 
 	var ignoreIPType lib.IgnoreIPOption
@@ -163,13 +163,21 @@ func (g *geoLite2ASNCSV) process(file string, entries map[string]*lib.Entry) err
 		entries = make(map[string]*lib.Entry)
 	}
 
-	fReader, err := os.Open(file)
+	var f io.ReadCloser
+	var err error
+	switch {
+	case strings.HasPrefix(strings.ToLower(file), "http://"), strings.HasPrefix(strings.ToLower(file), "https://"):
+		f, err = lib.GetRemoteURLReader(file)
+	default:
+		f, err = os.Open(file)
+	}
+
 	if err != nil {
 		return err
 	}
-	defer fReader.Close()
+	defer f.Close()
 
-	reader := csv.NewReader(fReader)
+	reader := csv.NewReader(f)
 	reader.Read() // skip header
 
 	for {
@@ -182,7 +190,7 @@ func (g *geoLite2ASNCSV) process(file string, entries map[string]*lib.Entry) err
 		}
 
 		if len(record) < 2 {
-			return fmt.Errorf("❌ [type %s | action %s] invalid record: %v", typeASNCSV, g.Action, record)
+			return fmt.Errorf("❌ [type %s | action %s] invalid record: %v", g.Type, g.Action, record)
 		}
 
 		if listArr, found := g.Want[strings.TrimSpace(record[1])]; found {

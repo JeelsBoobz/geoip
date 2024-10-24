@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/Loyalsoldier/geoip/lib"
-	router "github.com/v2fly/v2ray-core/v5/app/router/routercommon"
-	"github.com/v2fly/v2ray-core/v5/infra/conf/rule"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -39,6 +39,7 @@ func newGeoIPDat(action lib.Action, data json.RawMessage) (lib.OutputConverter, 
 		OutputName     string     `json:"outputName"`
 		OutputDir      string     `json:"outputDir"`
 		Want           []string   `json:"wantedList"`
+		Exclude        []string   `json:"excludedList"`
 		OneFilePerList bool       `json:"oneFilePerList"`
 		OnlyIPType     lib.IPType `json:"onlyIPType"`
 	}
@@ -64,6 +65,7 @@ func newGeoIPDat(action lib.Action, data json.RawMessage) (lib.OutputConverter, 
 		OutputName:     tmp.OutputName,
 		OutputDir:      tmp.OutputDir,
 		Want:           tmp.Want,
+		Exclude:        tmp.Exclude,
 		OneFilePerList: tmp.OneFilePerList,
 		OnlyIPType:     tmp.OnlyIPType,
 	}, nil
@@ -76,6 +78,7 @@ type geoIPDatOut struct {
 	OutputName     string
 	OutputDir      string
 	Want           []string
+	Exclude        []string
 	OneFilePerList bool
 	OnlyIPType     lib.IPType
 }
@@ -93,82 +96,36 @@ func (g *geoIPDatOut) GetDescription() string {
 }
 
 func (g *geoIPDatOut) Output(container lib.Container) error {
-	// Filter want list
-	wantList := make([]string, 0, 50)
-	for _, want := range g.Want {
-		if want = strings.ToUpper(strings.TrimSpace(want)); want != "" {
-			wantList = append(wantList, want)
-		}
-	}
-
-	geoIPList := new(router.GeoIPList)
-	geoIPList.Entry = make([]*router.GeoIP, 0, 300)
+	geoIPList := new(GeoIPList)
+	geoIPList.Entry = make([]*GeoIP, 0, 300)
 	updated := false
 
-	switch len(wantList) {
-	case 0:
-		list := make([]string, 0, 300)
-		for entry := range container.Loop() {
-			list = append(list, entry.GetName())
+	for _, name := range g.filterAndSortList(container) {
+		entry, found := container.GetEntry(name)
+		if !found {
+			log.Printf("❌ entry %s not found\n", name)
+			continue
 		}
 
-		// Sort the list
-		sort.Strings(list)
+		geoIP, err := g.generateGeoIP(entry)
+		if err != nil {
+			return err
+		}
+		geoIPList.Entry = append(geoIPList.Entry, geoIP)
+		updated = true
 
-		for _, name := range list {
-			entry, found := container.GetEntry(name)
-			if !found {
-				log.Printf("❌ entry %s not found", name)
-				continue
-			}
-			geoIP, err := g.generateGeoIP(entry)
+		if g.OneFilePerList {
+			geoIPBytes, err := proto.Marshal(geoIPList)
 			if err != nil {
 				return err
 			}
-			geoIPList.Entry = append(geoIPList.Entry, geoIP)
-			updated = true
 
-			if g.OneFilePerList {
-				geoIPBytes, err := proto.Marshal(geoIPList)
-				if err != nil {
-					return err
-				}
-				filename := strings.ToLower(entry.GetName()) + ".dat"
-				if err := g.writeFile(filename, geoIPBytes); err != nil {
-					return err
-				}
-				geoIPList.Entry = nil
-			}
-		}
-
-	default:
-		// Sort the list
-		sort.Strings(wantList)
-
-		for _, name := range wantList {
-			entry, found := container.GetEntry(name)
-			if !found {
-				log.Printf("❌ entry %s not found", name)
-				continue
-			}
-			geoIP, err := g.generateGeoIP(entry)
-			if err != nil {
+			filename := strings.ToLower(entry.GetName()) + ".dat"
+			if err := g.writeFile(filename, geoIPBytes); err != nil {
 				return err
 			}
-			geoIPList.Entry = append(geoIPList.Entry, geoIP)
-			updated = true
 
-			if g.OneFilePerList {
-				geoIPBytes, err := proto.Marshal(geoIPList)
-				if err != nil {
-					return err
-				}
-				filename := strings.ToLower(entry.GetName()) + ".dat"
-				if err := g.writeFile(filename, geoIPBytes); err != nil {
-					return err
-				}
-				geoIPList.Entry = nil
-			}
+			geoIPList.Entry = nil
 		}
 	}
 
@@ -188,42 +145,77 @@ func (g *geoIPDatOut) Output(container lib.Container) error {
 	return nil
 }
 
-func (g *geoIPDatOut) generateGeoIP(entry *lib.Entry) (*router.GeoIP, error) {
-	var entryCidr []string
+func (g *geoIPDatOut) filterAndSortList(container lib.Container) []string {
+	excludeMap := make(map[string]bool)
+	for _, exclude := range g.Exclude {
+		if exclude = strings.ToUpper(strings.TrimSpace(exclude)); exclude != "" {
+			excludeMap[exclude] = true
+		}
+	}
+
+	wantList := make([]string, 0, len(g.Want))
+	for _, want := range g.Want {
+		if want = strings.ToUpper(strings.TrimSpace(want)); want != "" && !excludeMap[want] {
+			wantList = append(wantList, want)
+		}
+	}
+
+	if len(wantList) > 0 {
+		// Sort the list
+		slices.Sort(wantList)
+		return wantList
+	}
+
+	list := make([]string, 0, 300)
+	for entry := range container.Loop() {
+		name := entry.GetName()
+		if excludeMap[name] {
+			continue
+		}
+		list = append(list, name)
+	}
+
+	// Sort the list
+	slices.Sort(list)
+
+	return list
+}
+
+func (g *geoIPDatOut) generateGeoIP(entry *lib.Entry) (*GeoIP, error) {
+	var entryCidr []netip.Prefix
 	var err error
 	switch g.OnlyIPType {
 	case lib.IPv4:
-		entryCidr, err = entry.MarshalText(lib.IgnoreIPv6)
+		entryCidr, err = entry.MarshalPrefix(lib.IgnoreIPv6)
 	case lib.IPv6:
-		entryCidr, err = entry.MarshalText(lib.IgnoreIPv4)
+		entryCidr, err = entry.MarshalPrefix(lib.IgnoreIPv4)
 	default:
-		entryCidr, err = entry.MarshalText()
+		entryCidr, err = entry.MarshalPrefix()
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	v2rayCIDR := make([]*router.CIDR, 0, 1024)
-	for _, cidrStr := range entryCidr {
-		cidr, err := rule.ParseIP(cidrStr)
-		if err != nil {
-			return nil, err
-		}
-		v2rayCIDR = append(v2rayCIDR, cidr)
+	v2rayCIDR := make([]*CIDR, 0, len(entryCidr))
+	for _, prefix := range entryCidr {
+		v2rayCIDR = append(v2rayCIDR, &CIDR{
+			Ip:     prefix.Addr().AsSlice(),
+			Prefix: uint32(prefix.Bits()),
+		})
 	}
 
 	if len(v2rayCIDR) > 0 {
-		return &router.GeoIP{
+		return &GeoIP{
 			CountryCode: entry.GetName(),
 			Cidr:        v2rayCIDR,
 		}, nil
 	}
 
-	return nil, fmt.Errorf("entry %s has no CIDR", entry.GetName())
+	return nil, fmt.Errorf("❌ [type %s | action %s] entry %s has no CIDR", g.Type, g.Action, entry.GetName())
 }
 
 // Sort by country code to make reproducible builds
-func (g *geoIPDatOut) sort(list *router.GeoIPList) {
+func (g *geoIPDatOut) sort(list *GeoIPList) {
 	sort.SliceStable(list.Entry, func(i, j int) bool {
 		return list.Entry[i].CountryCode < list.Entry[j].CountryCode
 	})

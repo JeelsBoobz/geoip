@@ -17,7 +17,9 @@ type textIn struct {
 	Description string
 	Name        string
 	URI         string
+	IPOrCIDR    []string
 	InputDir    string
+	Want        map[string]bool
 	OnlyIPType  lib.IPType
 
 	JSONPath             []string
@@ -198,7 +200,7 @@ func (t *textIn) scanFileForJSONIn(reader io.Reader, entry *lib.Entry) error {
 	}
 
 	if !gjson.ValidBytes(data) {
-		return fmt.Errorf("invalid JSON data")
+		return fmt.Errorf("❌ [type %s | action %s] invalid JSON data", t.Type, t.Action)
 	}
 
 	// JSON Path syntax:

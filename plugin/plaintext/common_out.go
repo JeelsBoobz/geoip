@@ -25,6 +25,7 @@ type textOut struct {
 	OutputDir   string
 	OutputExt   string
 	Want        []string
+	Exclude     []string
 	OnlyIPType  lib.IPType
 
 	AddPrefixInLine string
@@ -36,6 +37,7 @@ func newTextOut(iType string, action lib.Action, data json.RawMessage) (lib.Outp
 		OutputDir  string     `json:"outputDir"`
 		OutputExt  string     `json:"outputExtension"`
 		Want       []string   `json:"wantedList"`
+		Exclude    []string   `json:"excludedList"`
 		OnlyIPType lib.IPType `json:"onlyIPType"`
 
 		AddPrefixInLine string `json:"addPrefixInLine"`
@@ -72,6 +74,7 @@ func newTextOut(iType string, action lib.Action, data json.RawMessage) (lib.Outp
 		OutputDir:   tmp.OutputDir,
 		OutputExt:   tmp.OutputExt,
 		Want:        tmp.Want,
+		Exclude:     tmp.Exclude,
 		OnlyIPType:  tmp.OnlyIPType,
 
 		AddPrefixInLine: tmp.AddPrefixInLine,

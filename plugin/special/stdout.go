@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/Loyalsoldier/geoip/lib"
@@ -27,6 +28,7 @@ func init() {
 func newStdout(action lib.Action, data json.RawMessage) (lib.OutputConverter, error) {
 	var tmp struct {
 		Want       []string   `json:"wantedList"`
+		Exclude    []string   `json:"excludedList"`
 		OnlyIPType lib.IPType `json:"onlyIPType"`
 	}
 
@@ -41,6 +43,7 @@ func newStdout(action lib.Action, data json.RawMessage) (lib.OutputConverter, er
 		Action:      action,
 		Description: descStdout,
 		Want:        tmp.Want,
+		Exclude:     tmp.Exclude,
 		OnlyIPType:  tmp.OnlyIPType,
 	}, nil
 }
@@ -50,6 +53,7 @@ type stdout struct {
 	Action      lib.Action
 	Description string
 	Want        []string
+	Exclude     []string
 	OnlyIPType  lib.IPType
 }
 
@@ -66,16 +70,9 @@ func (s *stdout) GetDescription() string {
 }
 
 func (s *stdout) Output(container lib.Container) error {
-	// Filter want list
-	wantList := make(map[string]bool)
-	for _, want := range s.Want {
-		if want = strings.ToUpper(strings.TrimSpace(want)); want != "" {
-			wantList[want] = true
-		}
-	}
-
-	for entry := range container.Loop() {
-		if len(wantList) > 0 && !wantList[entry.GetName()] {
+	for _, name := range s.filterAndSortList(container) {
+		entry, found := container.GetEntry(name)
+		if !found {
 			continue
 		}
 
@@ -83,12 +80,49 @@ func (s *stdout) Output(container lib.Container) error {
 		if err != nil {
 			continue
 		}
+
 		for _, cidr := range cidrList {
 			io.WriteString(os.Stdout, cidr+"\n")
 		}
 	}
 
 	return nil
+}
+
+func (s *stdout) filterAndSortList(container lib.Container) []string {
+	excludeMap := make(map[string]bool)
+	for _, exclude := range s.Exclude {
+		if exclude = strings.ToUpper(strings.TrimSpace(exclude)); exclude != "" {
+			excludeMap[exclude] = true
+		}
+	}
+
+	wantList := make([]string, 0, len(s.Want))
+	for _, want := range s.Want {
+		if want = strings.ToUpper(strings.TrimSpace(want)); want != "" && !excludeMap[want] {
+			wantList = append(wantList, want)
+		}
+	}
+
+	if len(wantList) > 0 {
+		// Sort the list
+		slices.Sort(wantList)
+		return wantList
+	}
+
+	list := make([]string, 0, 300)
+	for entry := range container.Loop() {
+		name := entry.GetName()
+		if excludeMap[name] {
+			continue
+		}
+		list = append(list, name)
+	}
+
+	// Sort the list
+	slices.Sort(list)
+
+	return list
 }
 
 func (s *stdout) generateCIDRList(entry *lib.Entry) ([]string, error) {
