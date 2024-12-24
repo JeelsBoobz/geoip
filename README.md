@@ -21,6 +21,8 @@ This project releases various formats of GeoIP files automatically every Thursda
   - `geoip:netflix`（`GEOIP,NETFLIX`）
   - `geoip:telegram`（`GEOIP,TELEGRAM`）
   - `geoip:twitter`（`GEOIP,TWITTER`）
+  - `geoip:microsoft`（`GEOIP,MICROSOFT`）
+  - `geoip:garena`（`GEOIP,GARENA`）
   - `geoip:tor`（`GEOIP,TOR`）
 
 ## 下载地址与使用方法
