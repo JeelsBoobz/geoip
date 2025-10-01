@@ -172,7 +172,9 @@
           "telegram": ["AS62041", "AS62014", "AS59930", "AS44907", "AS211157"],
           "twitter": ["AS8945", "AS63179", "AS54888", "AS35995", "AS13414"],
           "microsoft": ["AS8075"],
-          "garena": ["AS58521"]
+          "garena": ["AS58521"],
+          "softlayer": ["AS36351"],
+          "tencent": ["AS132203"]
         }
       }
     },
@@ -216,6 +218,8 @@
           "twitter",
           "microsoft",
           "garena",
+          "softlayer",
+          "tencent",
           "tor"
         ]
       }
@@ -255,6 +259,8 @@
           "twitter",
           "microsoft",
           "garena",
+          "softlayer",
+          "tencent",
           "tor",
           "private"
         ]
@@ -279,6 +285,8 @@
           "twitter",
           "microsoft",
           "garena",
+          "softlayer",
+          "tencent",
           "tor"
         ]
       }
@@ -310,6 +318,8 @@
           "twitter",
           "microsoft",
           "garena",
+          "softlayer",
+          "tencent",
           "tor"
         ]
       }
